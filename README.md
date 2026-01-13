@@ -8,8 +8,6 @@ This project implements a **User Weighted Round-Robin (UWRR) scheduler simulatio
 The goal is to demonstrate how **user-level weights** influence CPU allocation, while preserving the fairness properties of a round-robin scheduler.  
 Instead of modifying the Linux kernel, the scheduler operates entirely in user space and uses **real OS processes** to simulate execution and preemption.
 
-The project is intended for educational purposes, as part of an **Operating Systems** course.
-
 ---
 
 ## Implemented Requirement
@@ -28,7 +26,7 @@ The project is intended for educational purposes, as part of an **Operating Syst
 - The scheduler:
   1. iterates over users in round-robin order
   2. resumes the user’s process
-  3. allows it to run for `weight × TIME_SLICE` seconds
+  3. allows it to run for a finite amount of time determined by its weight
   4. preempts it and moves to the next user
 
 This ensures:
@@ -37,13 +35,38 @@ This ensures:
 
 ---
 
+## Scheduler Operation Modes
+
+The scheduler supports **two execution modes**, selectable at compile time.  
+Both modes preserve the same CPU-time proportions dictated by user weights, but differ in execution granularity.
+
+### Coarse-Grained Mode
+
+- Each user is scheduled once per round
+- The process runs for `weight × TIME_SLICE` seconds in a single continuous interval
+- Simple and deterministic behavior
+- Higher latency for users with small weights
+
+This mode emphasizes clarity and proportional CPU sharing.
+
+### Fine-Grained Mode (Interleaving)
+
+- Each user’s execution time is split into multiple 1-second slots
+- Users alternate execution while they still have remaining weight
+- Total CPU time per user per round remains unchanged
+- Lower perceived latency and more realistic scheduling behavior
+
+This mode better illustrates time slicing and frequent preemption, while still simulating a single CPU.
+
+---
+
 ## Architecture
 
 ### Scheduler (parent process)
 
 - creates one child process per user
-- controls execution using signals
-- enforces time quantums
+- controls execution using POSIX signals
+- enforces time quanta
 - collects CPU usage statistics
 
 ### Worker processes (child processes)
@@ -61,7 +84,7 @@ Preemption is simulated using **POSIX signals**:
 - `SIGCONT` → resume execution
 - `SIGSTOP` → suspend execution
 
-This closely mimics how a real scheduler performs context switching, but without kernel-level code.
+This closely mimics how a real scheduler performs context switching, while remaining entirely in user space.
 
 ---
 
