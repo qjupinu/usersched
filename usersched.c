@@ -14,12 +14,26 @@
 
 #define TIME_SLICE 1
 
+typedef enum {
+    COARSE,
+    FINE
+} sched_mode_t;
+
+/*
+set SCHED_MODE to:
+    COARSE = coarse-grained; standard linear version
+    FINE = fine-grained, interleaving
+*/
+#define SCHED_MODE COARSE
+
 typedef struct {
     int uid;
     int weight;
+    int original_weight;
     pid_t pid;
     int cpu_time;
 } User;
+
 
 // child process func
 void child_work(int uid) {
@@ -33,44 +47,87 @@ void child_work(int uid) {
 }
 
 // scheduler
-void uwrr_scheduler(User *users, int n, int rounds) {
-    printf(BWHT"\n=== Starting round-robin user weighted scheduler  ===\n"WHT);
+void uwrr_scheduler(User *users, int n, int rounds, sched_mode_t mode) {
+    printf(BWHT"\n=== Starting User Weighted Round-Robin Scheduler ===\n"WHT);
+    printf("Mode: %s\n\n", mode == COARSE ? BYEL"COARSE-GRAINED" : "FINE-GRAINED"WHT);
 
     for (int r = 0; r < rounds; r++) {
         printf(BMAG"\n--- Round #%d ---\n"WHT, r + 1);
 
+        // reset weights at start of each round
         for (int i = 0; i < n; i++) {
-            int quantum = users[i].weight * TIME_SLICE;
+            users[i].weight = users[i].original_weight;
+        }
 
-            printf("Scheduler: START user %d for %d seconds\n",
-                   users[i].uid, quantum);
+        if (mode == COARSE) {
+            // ===== COARSE-GRAINED =====
+            for (int i = 0; i < n; i++) {
+                int quantum = users[i].weight * TIME_SLICE;
 
-            kill(users[i].pid, SIGCONT);
-            sleep(quantum);
-            kill(users[i].pid, SIGSTOP);
+                if (quantum <= 0)
+                    continue;
 
-            users[i].cpu_time += quantum;
-            printf("Scheduler: STOP user %d\n", users[i].uid);
+                printf("Scheduler: START user %d for %d seconds\n",
+                       users[i].uid, quantum);
+
+                kill(users[i].pid, SIGCONT);
+                sleep(quantum);
+                kill(users[i].pid, SIGSTOP);
+
+                users[i].cpu_time += quantum;
+                printf("Scheduler: STOP user %d\n", users[i].uid);
+            }
+        } else {
+            // ===== FINE-GRAINED (INTERLEAVING) =====
+            int work_left;
+
+            do {
+                work_left = 0;
+
+                for (int i = 0; i < n; i++) {
+                    if (users[i].weight > 0) {
+                        work_left = 1;
+
+                        printf("Scheduler: START user %d for 1 second\n",
+                               users[i].uid);
+
+                        kill(users[i].pid, SIGCONT);
+                        sleep(1);
+                        kill(users[i].pid, SIGSTOP);
+
+                        users[i].cpu_time += 1;
+                        users[i].weight--;
+                    }
+                }
+            } while (work_left);
         }
     }
 }
 
+
+
 int main() {
     system("clear");
+
     User users[] = {
-        {1000, 1, 0, 0},
-        {2000, 3, 0, 0},
-        {3000, 5, 0, 0}
+        {1000, 1, 0, 0, 0},
+        {2000, 5, 0, 0, 0},
+        {3000, 3, 0, 0, 0}
     };
 
     int n = sizeof(users) / sizeof(users[0]);
+
+    // IMPORTANT: initialize original_weight
+    for (int i = 0; i < n; i++) {
+        users[i].original_weight = users[i].weight;
+    }
 
     // create child procs
     for (int i = 0; i < n; i++) {
         pid_t pid = fork();
 
         if (pid == 0) {
-            raise(SIGSTOP);  // wait for scheduler
+            raise(SIGSTOP);
             child_work(users[i].uid);
             exit(0);
         } else {
@@ -78,9 +135,9 @@ int main() {
         }
     }
 
-    uwrr_scheduler(users, n, 3);
+    uwrr_scheduler(users, n, 3, SCHED_MODE);
 
-    // kill all children
+    // cleanup
     for (int i = 0; i < n; i++) {
         kill(users[i].pid, SIGKILL);
         waitpid(users[i].pid, NULL, 0);
@@ -94,3 +151,4 @@ int main() {
 
     return 0;
 }
+
